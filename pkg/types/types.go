@@ -68,6 +68,14 @@ type NetConf struct {
 
 	RawPrevResult map[string]interface{} `json:"prevResult,omitempty"`
 	PrevResult    Result                 `json:"-"`
+
+	// ValidAttachments is only supplied when executing a GC operation
+	ValidAttachments []GCAttachment `json:"cni.dev/valid-attachments"`
+}
+
+type GCAttachment struct {
+	ContainerID string `json:"containerID"`
+	IfName      string `json:"ifname"`
 }
 
 // Note: DNS should be omit if DNS is empty but default Marshal function
