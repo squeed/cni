@@ -37,6 +37,7 @@
       - [Delegated plugins (IPAM)](#delegated-plugins-ipam)
     - [VERSION Success](#version-success)
     - [Error](#error)
+      - [Effect state](#effect-state)
     - [Version](#version-1)
   - [Appendix: Examples](#appendix-examples)
     - [Add example](#add-example)
@@ -415,7 +416,10 @@ The operation of a network configuration on a container is called an _attachment
 - The container runtime must not invoke parallel operations for the same container, but is allowed to invoke parallel operations for different containers. This includes across multiple attachments.
   - **Exception**: The runtime must exclusively execute either _gc_ or _add_ and _delete_. The runtime must ensure that no _add_ or _delete_ operations are in progress before executing _gc_, and must wait for _gc_ to complete before issuing new _add_ or _delete_ commands.
 - Plugins must handle being executed concurrently across different containers. If necessary, they must implement locking on shared resources (e.g. IPAM databases).
-- The container runtime must ensure that _add_ is eventually followed by a corresponding _delete_. The only exception is in the event of catastrophic failure, such as node loss. A _delete_ must still be executed even if the _add_ fails.
+- The container runtime must ensure that every _add_ is eventually followed by a corresponding successful _delete_. A delete_ must still be executed even if the _add_ fails, except for the following exceptional cases:
+    - A _delete_ is optional after a failed _add_ or _delete_ if all executed plugins report an `effectState` of `none`.
+    - A _delete_ is optional after a failed _add_ or _delete_ if the runtime is preparing to delete the container, and all executed plugins report an `effectState` of `none` or `container`
+    - The node has suffered a catastrophic failure.
 - _delete_ may be followed by additional _deletes_.
 - The network configuration should not change between _add_ and _delete_.
 - The network configuration should not change between _attachments_.
@@ -627,6 +631,7 @@ Plugins should output a JSON object with the following keys if they encounter an
 - `code`: A numeric error code, see below for reserved codes.
 - `msg`: A short message characterizing the error.
 - `details`: A longer message describing the error.
+- `effectState`: The current state of the plugin's side-effects
 
 Example:
 
@@ -635,7 +640,8 @@ Example:
   "cniVersion": "1.1.0",
   "code": 7,
   "msg": "Invalid Configuration",
-  "details": "Network 192.168.0.0/31 too small to allocate from."
+  "details": "Network 192.168.0.0/31 too small to allocate from.",
+  "effectState": "none"
 }
 ```
 
@@ -654,7 +660,22 @@ Error Code|Error Description
  `50`|The plugin is not available (i.e. cannot service `ADD` requests)
  `51`|The plugin is not available, and existing containers in the network may have limited connectivity.
 
-In addition, stderr can be used for unstructured output such as logs.
+#### Effect state
+As part of an error code, the plugin can report the current state of the _effect_ caused
+by the plugin.
+
+This can be used to avoid re-trying a DEL when not necessary. It is useful to escape certain
+degraded scenarios, where a DEL is partially succeeding, but is failing to tear down state
+that will be deleted regardless as the container is going away.
+
+The current supported values are:
+
+- `none`: The plugin has currently had no permanent effects (e.g. interfaces, IPAM allocations).
+    If an ADD returns an error with this value set, the DEL is optional
+- `container`: The plugin's effects are isolated to the container (i.e. network namespace).
+    A DEL is optional if the runtime is preparing to delete the container.
+- `global`: There is global state that remains to be cleaned up. A DEL is required, even
+    the runtime is preparing to delete the container.
 
 ### Version
 
